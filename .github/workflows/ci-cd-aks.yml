@@ -1,0 +1,36 @@
+name: Build Push Deploy to AKS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: \${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Build and Push Image
+      run: |
+        ACR_LOGIN=\$(az acr show -n \${{ secrets.ACR_NAME }} -g \${{ secrets.AZURE_RESOURCE_GROUP }} --query loginServer -o tsv)
+        IMAGE_TAG=\$ACR_LOGIN/web-demo:\${GITHUB_SHA::8}
+        docker build -t \$IMAGE_TAG .
+        az acr login -n \${{ secrets.ACR_NAME }}
+        docker push \$IMAGE_TAG
+        echo "IMAGE_TAG=\$IMAGE_TAG" >> \$GITHUB_ENV
+
+    - name: Get AKS Credentials
+      run: |
+        az aks get-credentials --resource-group \${{ secrets.AZURE_RESOURCE_GROUP }} --name \${{ secrets.AKS_NAME }} --overwrite-existing
+
+    - name: Deploy to AKS
+      run: |
+        kubectl set image deployment/web-demo web-demo=\$IMAGE_TAG --record || kubectl apply -f k8s/
+        kubectl get svc web-demo-svc
